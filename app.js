@@ -696,14 +696,14 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
       </div>
       <h2>Rédacteur par défaut</h2>
       <div class="card">
-        <label>Nom</label><input id="redacteur" value="${esc(s.redacteur)}" placeholder="Prénom NOM">
-        <label>Relecteur par défaut</label><input id="relecteur" value="${esc(s.relecteur)}" placeholder="Prénom NOM">
+        <label>Nom</label><input id="redacteur" type="text" name="anubis-redacteur" value="${esc(s.redacteur)}" placeholder="Prénom NOM" autocomplete="off" autocorrect="off" data-lpignore="true">
+        <label>Relecteur par défaut</label><input id="relecteur" type="text" name="anubis-relecteur" value="${esc(s.relecteur)}" placeholder="Prénom NOM" autocomplete="off" autocorrect="off" data-lpignore="true">
         <label>Fonction</label><input id="fonction" value="${esc(s.fonction)}">
       </div>
       <h2>Assistant IA (Claude)</h2>
       <div class="card">
         <p class="hint">Corrige la dictée (« t'as lu » → talus…), reformule observations et avis en style CR G4, propose le statut et rédige la conclusion. Nécessite votre propre clé API, créée sur platform.claude.com/settings/keys (crédits prépayés, quelques centimes par visite). La clé reste sur cet iPhone ; le texte des points est envoyé à Claude au moment où vous touchez ✨.</p>
-        <label>Clé API</label><input id="iaKey" type="password" value="${esc(iaKey)}" placeholder="sk-ant-…" autocomplete="off">
+        <label>Clé API</label><input id="iaKey" type="text" value="${esc(iaKey)}" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" style="-webkit-text-security:disc">
         <label>Modèle</label><select id="iaModel">
           <option value="claude-sonnet-5-5" ${iaModel === 'claude-sonnet-5-5' ? 'selected' : ''}>Claude Sonnet 5.5 (recommandé)</option>
           <option value="claude-haiku-5-5" ${iaModel === 'claude-haiku-5-5' ? 'selected' : ''}>Claude Haiku 5.5 (plus économique)</option>
@@ -722,7 +722,10 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
         <button class="btn ghost" id="imp">⬆︎ Restaurer une sauvegarde</button>
       </div>
       <p class="hint" style="text-align:center">ANUBIS v1.3 · fonctionne hors connexion</p>`;
-    for (const k of ['societe', 'agence', 'redacteur', 'relecteur', 'fonction', 'iaKey']) $('#' + k).oninput = debounce((e) => DB.setSetting(k, e.target.value.trim()), 300);
+    for (const k of ['societe', 'agence', 'redacteur', 'relecteur', 'fonction', 'iaKey']) {
+      const el = $('#' + k), saveNow = () => DB.setSetting(k, el.value.trim());
+      el.addEventListener('input', debounce(saveNow, 300)); el.addEventListener('change', saveNow); el.addEventListener('blur', saveNow);
+    }
     $('#iaModel').onchange = (e) => DB.setSetting('iaModel', e.target.value);
     $('#dictionnaire').oninput = debounce(async (e) => { await DB.setSetting('dictionnaire', e.target.value); loadVocab(); }, 300);
     $('#iaTest').onclick = async () => {
