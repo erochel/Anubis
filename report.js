@@ -3,10 +3,9 @@
    Ouvrages / Observations / Avis Ginger, puis planches photographiques. */
 (function (root) {
   const STATUTS = {
-    conforme:   { label: 'Conforme',      color: '2E7D32' },
-    surveiller: { label: 'À surveiller',  color: 'E65100' },
-    nonconf:    { label: 'Non conforme',  color: 'C62828' },
-    nv:         { label: 'Non vérifié',   color: '757575' },
+    SO:  { label: 'SO – sans observation géotechnique', court: 'Sans obs.', color: '2E7D32' },
+    OBS: { label: 'OBS – avec observation(s) géotechnique(s)', court: 'Avec obs.', color: 'E65100' },
+    HM:  { label: 'HM – hors mission géotechnique', court: 'Hors mission', color: '757575' },
   };
 
   function frDate(iso) {

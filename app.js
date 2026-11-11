@@ -7,6 +7,10 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const today = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
   const { STATUTS, frDate } = window.Report;
+  const LEGACY = { conforme: 'SO', surveiller: 'OBS', nonconf: 'OBS', nv: 'SO' };
+  const normPoint = (p) => { if (!STATUTS[p.statut]) p.statut = LEGACY[p.statut] || 'SO'; if (p.avis == null) p.avis = ''; return p; };
+  const introType = (a, v) => `Lors de notre visite de chantier du ${frDate(v.date)}, nous nous sommes rendus sur le chantier ${a.intitule ? 'de ' + a.intitule : ''}.${a.entreprise ? ` L'entreprise ${a.entreprise} était présente sur le site.` : ''}`;
+  const CLOTURE_TYPE = "Nous n'avons pas d'autres observations.";
 
   // ------------------------------------------------------------------
   // Référentiel : listes de contrôle G4 et phrases rapides
@@ -92,6 +96,13 @@
     c.getContext('2d').drawImage(src, 0, 0, w, h);
     const blob = await new Promise(res => c.toBlob(res, 'image/jpeg', quality));
     return { buf: await blob.arrayBuffer(), w, h, mime: 'image/jpeg' };
+  }
+  async function toPng(file, max = 600) {
+    const bmp = await createImageBitmap(file); const c = document.createElement('canvas');
+    const r = Math.min(1, max / bmp.width); c.width = Math.round(bmp.width * r); c.height = Math.round(bmp.height * r);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    const b = await new Promise(res => c.toBlob(res, 'image/png'));
+    return { buf: await b.arrayBuffer(), w: c.width, h: c.height };
   }
   function pickFiles({ accept = 'image/*', capture = false, multiple = true } = {}) {
     return new Promise(resolve => {
@@ -247,6 +258,9 @@ Règles :
         <label>Maître d'ouvrage / Client</label><input id="client" value="${esc(a.client)}">
         <label>Maître d'œuvre</label><input id="moe" value="${esc(a.moe)}">
         <label>Entreprise(s)</label><input id="entreprise" value="${esc(a.entreprise)}">
+        ${isNew ? '' : `<label>Logo du client (à gauche du cartouche)</label>
+        ${a.logo ? `<img src="${blobUrl({ buf: a.logo.buf, mime: 'image/png' })}" style="max-height:56px;display:block;margin:6px 0">` : '<p class="hint">Aucun logo : l\'emplacement restera vide dans le cartouche.</p>'}
+        <div class="row"><button class="btn small ghost" id="clogo">Choisir le logo client</button>${a.logo ? '<button class="btn small danger" id="clogoDel">Retirer</button>' : ''}</div>`}
         ${isNew ? '<button class="btn" id="saveA">Créer l\'affaire</button>' : '<p class="hint">Enregistrement automatique.</p>'}
       </div>
       ${isNew ? '' : '<button class="btn danger" id="delA">Supprimer l\'affaire et ses visites</button>'}`;
@@ -261,6 +275,11 @@ Règles :
       const save = debounce(async () => { read(); await DB.put('affaires', a); $('#subtitle').textContent = a.numero; });
       $$('input', app).forEach(i => i.oninput = save);
       $('#newVisite').onclick = () => newVisite(a, visites);
+      $('#clogo').onclick = async () => {
+        const [f] = await pickFiles({ multiple: false }); if (!f) return;
+        a.logo = await toPng(f, 800); await DB.put('affaires', a); viewAffaire(a.id);
+      };
+      if (a.logo) $('#clogoDel').onclick = async () => { a.logo = null; await DB.put('affaires', a); viewAffaire(a.id); };
       $('#delA').onclick = async () => {
         if (!confirm(`Supprimer l'affaire ${a.numero} et toutes ses visites, photos et notes ?`)) return;
         for (const v of visites) await deleteVisite(v.id);
@@ -275,14 +294,16 @@ Règles :
     const v = {
       id: DB.uid(), affaireId: a.id, numero, date: today(),
       heureDebut: new Date().toTimeString().slice(0, 5), heureFin: '',
-      redacteur: await DB.getSetting('redacteur', ''), participants: prev?.participants || '',
-      meteo: '', phase: prev?.phase || '', objet: '', conclusion: '', prochaineVisite: '', diffusion: prev?.diffusion || '',
+      redacteur: await DB.getSetting('redacteur', ''), relecteur: prev?.relecteur || await DB.getSetting('relecteur', ''),
+      participants: prev?.participants || '',
+      meteo: '', phase: prev?.phase || '', objet: '', conclusion: CLOTURE_TYPE, prochaineVisite: '', diffusion: prev?.diffusion || '',
       points: [], createdAt: Date.now(),
     };
+    v.objet = introType(a, v);
     // Reprise des points restés ouverts lors de la visite précédente
-    const open = (prev?.points || []).filter(p => p.statut === 'nonconf' || p.statut === 'surveiller');
+    const open = (prev?.points || []).map(normPoint).filter(p => p.statut === 'OBS');
     if (open.length && confirm(`Reprendre les ${open.length} point(s) ouvert(s) de la visite n°${prev.numero} ?`)) {
-      v.points = open.map(p => ({ id: DB.uid(), ouvrage: p.ouvrage, observation: `Suite visite n°${prev.numero} : ${p.avis || p.observation}\n`, avis: '', statut: 'nv' }));
+      v.points = open.map(p => ({ id: DB.uid(), ouvrage: p.ouvrage, observation: `Suite à la visite n°${prev.numero} : ${p.observation}`, avis: p.avis || '', statut: 'OBS' }));
     }
     await DB.put('visites', v);
     a.updatedAt = Date.now(); await DB.put('affaires', a);
@@ -302,6 +323,7 @@ Règles :
     const v = await DB.get('visites', id);
     if (!v) return (location.hash = '#/');
     const a = await DB.get('affaires', v.affaireId);
+    (v.points || []).forEach(normPoint);
     setBar(`${a.numero} · Visite n°${v.numero} · ${frDate(v.date)}`, `#/affaire/${a.id}`, TABS(id), `#/visite/${id}/${tab}`);
     fab(null);
     const save = async () => { v.updatedAt = Date.now(); await DB.put('visites', v); };
@@ -316,22 +338,26 @@ Règles :
           <div><label>Date de visite</label><input id="date" type="date" value="${esc(v.date)}"></div></div>
         <div class="row"><div><label>Arrivée</label><input id="heureDebut" type="time" value="${esc(v.heureDebut)}"></div>
           <div><label>Départ</label><input id="heureFin" type="time" value="${esc(v.heureFin)}"></div></div>
-        <label>Rédacteur</label><input id="redacteur" value="${esc(v.redacteur)}">
+        <div class="row"><div><label>Rédacteur</label><input id="redacteur" value="${esc(v.redacteur)}"></div>
+          <div><label>Relecteur</label><input id="relecteur" value="${esc(v.relecteur || '')}"></div></div>
         <label>Personnes présentes (une par ligne)</label>${micField('participants', v.participants, 'Nom (Société)')}
         <label>Conditions météo</label><input id="meteo" value="${esc(v.meteo)}">
         <div class="chips">${METEO.map(m => `<button class="chip" data-meteo="${esc(m)}">${esc(m)}</button>`).join('')}</div>
         <label>Phase des travaux</label><input id="phase" value="${esc(v.phase)}" placeholder="ex. Terrassement 2e passe">
-        <label>Objet de la visite</label>${micField('objet', v.objet, 'Contrôle de…')}
+        <label>Introduction (début du tableau)</label>${micField('objet', v.objet, 'Lors de notre visite…')}
+        <button class="btn ghost small" id="introType" style="margin-top:6px">↻ Texte type</button>
       </div>
       <div class="card">
-        <label>Conclusion et suites à donner</label>${micField('conclusion', v.conclusion)}
-        <button class="btn ghost small" id="aiConcl" style="margin-top:8px">✨ Rédiger la conclusion à partir des contrôles</button>
+        <label>Phrase de fin du tableau</label>${micField('conclusion', v.conclusion)}
+        <button class="btn ghost small" id="aiConcl" style="margin-top:8px">✨ Rédiger la fin à partir des contrôles</button>
         <label>Prochaine visite prévue</label><input id="prochaineVisite" value="${esc(v.prochaineVisite)}" placeholder="ex. semaine 47 / à l'avancement">
         <label>Diffusion</label><input id="diffusion" value="${esc(v.diffusion)}" placeholder="MOA, MOE, Entreprise…">
       </div>
       <button class="btn danger" id="delV">Supprimer cette visite</button>`;
-    const fields = ['numero', 'date', 'heureDebut', 'heureFin', 'redacteur', 'participants', 'meteo', 'phase', 'objet', 'conclusion', 'prochaineVisite', 'diffusion'];
+    const fields = ['numero', 'date', 'heureDebut', 'heureFin', 'redacteur', 'relecteur', 'participants', 'meteo', 'phase', 'objet', 'conclusion', 'prochaineVisite', 'diffusion'];
     const persist = debounce(async () => {
+      const oldD = frDate(v.date), newD = frDate($('#date').value);
+      if (oldD && newD && oldD !== newD && $('#objet').value.includes(oldD)) $('#objet').value = $('#objet').value.split(oldD).join(newD);
       fields.forEach(k => v[k] = $('#' + k).value); v.numero = +v.numero || v.numero; await save();
       $('#subtitle').textContent = `${a.numero} · Visite n°${v.numero} · ${frDate(v.date)}`;
     });
@@ -340,15 +366,16 @@ Règles :
       const m = $('#meteo'); m.value = m.value ? `${m.value}, ${c.dataset.meteo.toLowerCase()}` : c.dataset.meteo; persist();
     });
     bindMics();
+    $('#introType').onclick = () => { $('#objet').value = introType(a, { ...v, date: $('#date').value }); persist(); };
     $('#aiConcl').onclick = async (ev) => {
       if (!v.points.length) return toast('Ajoutez d\'abord des points de contrôle');
       const b = ev.currentTarget; b.disabled = true; b.textContent = '✨ Rédaction…';
       try {
         const pts = v.points.map((p, i) => `${i + 1}. ${p.ouvrage} [${STATUTS[p.statut]?.label}] Obs : ${p.observation} | Avis : ${p.avis}`).join('\n');
-        const r = await aiCall(`Opération : ${a.intitule} (${a.commune}). Phase : ${v.phase || 'non précisée'}.\nPoints de contrôle de la visite :\n${pts}\nNotes de conclusion déjà saisies (dictée) : ${$('#conclusion').value || '(aucune)'}\n\nRédige la conclusion du compte rendu : synthèse en 2 à 5 phrases puis les suites à donner sous forme de tirets « - ». JSON attendu : {"conclusion": "..."}`);
+        const r = await aiCall(`Opération : ${a.intitule} (${a.commune}). Phase : ${v.phase || 'non précisée'}.\nPoints de contrôle de la visite :\n${pts}\nNotes de conclusion déjà saisies (dictée) : ${$('#conclusion').value || '(aucune)'}\n\nRédige la phrase (ou les 2-3 phrases) de fin du tableau d'observations : synthèse et suites à donner si nécessaire. S'il n'y a rien à signaler, écris « Nous n'avons pas d'autres observations. ». JSON attendu : {"conclusion": "..."}`);
         aiDialog('Conclusion proposée', [{ label: 'Conclusion et suites à donner', value: r.conclusion || '' }], ([c]) => { $('#conclusion').value = c; persist(); });
       } catch (e) { alert(e.message); }
-      b.disabled = false; b.textContent = '✨ Rédiger la conclusion à partir des contrôles';
+      b.disabled = false; b.textContent = '✨ Rédiger la fin à partir des contrôles';
     };
     $('#delV').onclick = async () => {
       if (!confirm(`Supprimer la visite n°${v.numero} (photos et notes comprises) ?`)) return;
@@ -373,14 +400,15 @@ Règles :
           return `
           <div class="card stripe ${p.statut}" data-id="${p.id}">
             <div class="point-head"><span class="n">${i + 1}</span><input data-f="ouvrage" value="${esc(p.ouvrage)}" placeholder="Ouvrage contrôlé"></div>
-            <div class="seg">${Object.entries(STATUTS).map(([k, s]) => `<button data-s="${k}" class="${p.statut === k ? 'on' : ''}">${s.label}</button>`).join('')}</div>
+            <div class="seg">${Object.entries(STATUTS).map(([k, s]) => `<button data-s="${k}" class="${p.statut === k ? 'on' : ''}"><b>${k}</b><br><small>${esc(s.court)}</small></button>`).join('')}</div>
             <label>Observations</label>${micField('obs_' + p.id, p.observation, 'Constat sur site…')}
-            <label>Avis Ginger</label>${micField('avis_' + p.id, p.avis, 'Avis / prescription…')}
+            <label>Prescription Ginger (optionnel, en gras sous l'observation)</label>${micField('avis_' + p.id, p.avis, 'ex. Le profilé devra être conforté…')}
             <div class="chips">${AVIS_RAPIDES.map(t => `<button class="chip" data-avis="${esc(t)}">${esc(t)}</button>`).join('')}</div>
             ${ph.length ? `<div class="thumbs mini">${ph.map(x => `<div class="thumb"><img src="${blobUrl(x)}"><span class="tag">${photos.indexOf(x) + 1}</span></div>`).join('')}</div>` : ''}
             <div class="point-tools">
               <button class="btn small gold" data-act="photo">📷 Photo</button>
               <button class="btn small" data-act="ai">✨ IA</button>
+              <button class="btn small ghost" data-act="same">＋ Obs. même ouvrage</button>
               <button class="btn small ghost" data-act="up">↑</button>
               <button class="btn small ghost" data-act="down">↓</button>
               <button class="btn small danger" data-act="del">Supprimer</button>
@@ -388,9 +416,9 @@ Règles :
           </div>`;
         }).join('')}`;
       bindMics();
-      $('#addPt').onclick = async () => { v.points.push({ id: DB.uid(), ouvrage: '', observation: '', avis: '', statut: 'nv' }); await save(); render(); $$('[data-f="ouvrage"]').pop()?.focus(); };
+      $('#addPt').onclick = async () => { v.points.push({ id: DB.uid(), ouvrage: '', observation: '', avis: '', statut: 'SO' }); await save(); render(); $$('[data-f="ouvrage"]').pop()?.focus(); };
       $('#fromList').onclick = () => checklistDialog(async (items) => {
-        items.forEach(o => v.points.push({ id: DB.uid(), ouvrage: o, observation: '', avis: '', statut: 'nv' }));
+        items.forEach(o => v.points.push({ id: DB.uid(), ouvrage: o, observation: '', avis: '', statut: 'SO' }));
         await save(); render(); toast(`${items.length} point(s) ajouté(s)`);
       });
       $$('.card[data-id]').forEach(card => {
@@ -413,6 +441,9 @@ Règles :
             for (const x of photos.filter(x => x.pointId === p.id)) { x.pointId = null; await DB.put('media', x); }
           } else if (b.dataset.act === 'up' && i > 0) [v.points[i - 1], v.points[i]] = [v.points[i], v.points[i - 1]];
           else if (b.dataset.act === 'down' && i < v.points.length - 1) [v.points[i + 1], v.points[i]] = [v.points[i], v.points[i + 1]];
+          else if (b.dataset.act === 'same') {
+            v.points.splice(i + 1, 0, { id: DB.uid(), ouvrage: p.ouvrage, observation: '', avis: '', statut: 'SO' });
+          }
           else if (b.dataset.act === 'ai') {
             if (!p.observation.trim() && !p.avis.trim()) return toast('Dictez ou saisissez d\'abord une observation');
             b.disabled = true; b.textContent = '…';
@@ -423,11 +454,11 @@ Statut choisi : ${STATUTS[p.statut]?.label}
 Observations brutes (dictée) : ${p.observation || '(vide)'}
 Avis brut : ${p.avis || '(vide)'}
 
-Corrige et reformule en style CR G4. Si l'avis est vide, propose un avis Ginger cohérent avec les observations. Propose le statut le plus adapté parmi : conforme, surveiller, nonconf, nv. Améliore aussi l'intitulé de l'ouvrage s'il est vague (ex. « Zone 1 » → « Zone 1 – talus »), sans inventer.
-JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut": "conforme|surveiller|nonconf|nv"}`);
+Corrige et reformule l'observation en style CR G4 (une ou quelques phrases, comme une puce de compte rendu). Le champ "avis" est une prescription Ginger courte et optionnelle : laisse-le vide s'il n'y a rien à prescrire, sinon formule clairement ce que l'entreprise doit faire. Propose le code d'avis : "SO" (sans observation du point de vue géotechnique), "OBS" (avec observation(s) géotechnique(s), dès qu'il y a une réserve, une anomalie ou une prescription), "HM" (hors mission géotechnique). Écris l'ouvrage en majuscules, court (ex. « PRÉ-TERRASSEMENTS », « ZONE 1 – TALUS »), sans inventer.
+JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut": "SO|OBS|HM"}`);
               aiDialog(`Point ${i + 1}`, [
                 { label: 'Ouvrage', value: r.ouvrage || p.ouvrage }, { label: 'Observations', value: r.observation || '' },
-                { label: 'Avis Ginger', value: r.avis || '' }, { label: 'Statut', type: 'statut', value: STATUTS[r.statut] ? r.statut : p.statut },
+                { label: 'Prescription Ginger', value: r.avis || '' }, { label: 'Avis Ginger', type: 'statut', value: STATUTS[r.statut] ? r.statut : p.statut },
               ], async ([o, ob, av, st]) => { Object.assign(p, { ouvrage: o, observation: ob, avis: av, statut: st }); await save(); render(); toast('Point mis à jour'); });
             } catch (e) { alert(e.message); }
             return render();
@@ -485,12 +516,13 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
           <button class="btn gold small" id="cam">📷 Prendre une photo</button>
           <button class="btn ghost small" id="lib">🖼 Photothèque</button>
         </div>
+        <p class="hint">Le titre devient l'encadré rouge de la planche. Deux photos consécutives avec le même titre sont placées côte à côte sur la même page ; une photo seule est affichée en grand.</p>
         ${photos.length ? '' : '<div class="empty"><div class="glyph">📷</div><p>Les photos apparaîtront dans les planches photographiques du compte rendu, numérotées dans cet ordre.</p></div>'}
         ${photos.map((p, i) => `
           <div class="card photo-edit" data-id="${p.id}">
             <div class="thumb"><img src="${blobUrl(p)}"><span class="tag">${i + 1}</span></div>
             <div>
-              <input data-f="legende" value="${esc(p.legende)}" placeholder="Légende de la photo ${i + 1}">
+              <input data-f="legende" value="${esc(p.legende)}" placeholder="Titre de planche (ex. Vue d'ensemble)">
               <select data-f="pointId" style="margin-top:6px"><option value="">— Aucun point lié —</option>
                 ${v.points.map((pt, j) => `<option value="${pt.id}" ${pt.id === p.pointId ? 'selected' : ''}>${j + 1}. ${esc(pt.ouvrage || 'Point sans titre')}</option>`).join('')}</select>
               <div class="point-tools"><button class="btn small ghost" data-act="up">↑</button><button class="btn small ghost" data-act="down">↓</button><button class="btn small danger" data-act="del">Supprimer</button></div>
@@ -545,7 +577,7 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
         $$('[data-act]', card).forEach(b => b.onclick = async () => {
           if (b.dataset.act === 'del') { if (!confirm('Supprimer ce mémo ?')) return; await DB.del('media', m.id); return render(); }
           if (!ta.value.trim()) return toast('Saisissez ou dictez d\'abord le texte du mémo');
-          if (b.dataset.act === 'topoint') { v.points.push({ id: DB.uid(), ouvrage: '', observation: ta.value.trim(), avis: '', statut: 'nv' }); toast('Point créé dans Contrôles'); }
+          if (b.dataset.act === 'topoint') { v.points.push({ id: DB.uid(), ouvrage: '', observation: ta.value.trim(), avis: '', statut: 'SO' }); toast('Point créé dans Contrôles'); }
           else { v.conclusion = (v.conclusion ? v.conclusion.trim() + '\n' : '') + ta.value.trim(); toast('Ajouté à la conclusion'); }
           await save();
         });
@@ -582,35 +614,45 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
     if (!v.redacteur) warns.push('Rédacteur non renseigné');
     if (!v.participants) warns.push('Personnes présentes non renseignées');
     if (!v.points.length) warns.push('Aucun point de contrôle');
-    const nv = v.points.filter(p => p.statut === 'nv').length; if (nv) warns.push(`${nv} point(s) au statut « Non vérifié »`);
-    const noAvis = v.points.filter(p => !p.avis.trim()).length; if (noAvis) warns.push(`${noAvis} point(s) sans avis Ginger`);
-    if (!v.conclusion) warns.push('Conclusion vide');
-    const noLeg = photos.filter(p => !p.legende).length; if (noLeg) warns.push(`${noLeg} photo(s) sans légende`);
+    const vide = v.points.filter(p => !p.observation.trim()).length; if (vide) warns.push(`${vide} point(s) sans observation`);
+    const noOuv = v.points.filter(p => !p.ouvrage.trim()).length; if (noOuv) warns.push(`${noOuv} point(s) sans ouvrage`);
+    if (!v.relecteur) warns.push('Relecteur non renseigné');
+    if (!a.logo) warns.push('Pas de logo client pour cette affaire (fiche affaire)');
+    const noLeg = photos.filter(p => !p.legende).length; if (noLeg) warns.push(`${noLeg} photo(s) sans titre de planche`);
+    const modele = await DB.getSetting('modele', null);
+    if (!modele) warns.push('Aucun modèle Word importé : mise en page standard ANUBIS (⚙︎ Réglages → Modèle Word)');
     const cnt = (s) => v.points.filter(p => p.statut === s).length;
     app.innerHTML = `
       <div class="card">
         <div class="big" style="font-weight:800;font-size:18px">CR de visite G4 n°${esc(v.numero)}</div>
         <div class="hint">Affaire ${esc(a.numero)} · ${esc(a.intitule)} · ${frDate(v.date)}</div>
-        <p>${v.points.length} point(s) : <span style="color:var(--ok)">${cnt('conforme')} conforme(s)</span> · <span style="color:var(--warn)">${cnt('surveiller')} à surveiller</span> · <span style="color:var(--ko)">${cnt('nonconf')} non conforme(s)</span><br>${photos.length} photo(s)</p>
+        <p>${v.points.length} observation(s) : <span style="color:var(--ok)">${cnt('SO')} SO</span> · <span style="color:var(--warn)">${cnt('OBS')} OBS</span> · <span style="color:var(--nv)">${cnt('HM')} HM</span><br>${photos.length} photo(s)${modele ? `<br><span class="hint">Modèle : ${esc(modele.name)}</span>` : ''}</p>
         ${warns.length ? `<b>À vérifier avant envoi :</b><ul class="warn-list">${warns.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : '<ul class="ok-list"><li>Tout est renseigné.</li></ul>'}
-        <label>Photos par page</label>
-        <select id="ppp"><option value="2" ${perPage === 2 ? 'selected' : ''}>2 grandes photos</option><option value="4" ${perPage === 4 ? 'selected' : ''}>4 photos</option></select>
+        ${modele ? '' : `<label>Photos par page</label>
+        <select id="ppp"><option value="2" ${perPage === 2 ? 'selected' : ''}>2 grandes photos</option><option value="4" ${perPage === 4 ? 'selected' : ''}>4 photos</option></select>`}
         <button class="btn gold" id="gen">📄 Générer le compte rendu Word</button>
         <p class="hint">Le fichier .docx s'ouvre dans la feuille de partage iOS : Enregistrer dans Fichiers, Mail, Teams, OneDrive…</p>
       </div>`;
-    $('#ppp').onchange = (e) => DB.setSetting('photosParPage', +e.target.value);
+    if ($('#ppp')) $('#ppp').onchange = (e) => DB.setSetting('photosParPage', +e.target.value);
     $('#gen').onclick = async () => {
       const btn = $('#gen'); btn.disabled = true; btn.textContent = 'Génération…';
       try {
         const logo = await DB.getSetting('logo', null);
         const settings = {
           societe: await DB.getSetting('societe', 'GINGER CEBTP'), agence: await DB.getSetting('agence', ''),
-          fonction: await DB.getSetting('fonction', 'Ingénieur géotechnicien'), photosParPage: +$('#ppp').value,
+          fonction: await DB.getSetting('fonction', 'Ingénieur géotechnicien'), photosParPage: +($('#ppp')?.value || perPage),
           logo: logo ? { data: new Uint8Array(logo.buf), w: logo.w, h: logo.h, type: 'png' } : null,
         };
         const ph = photos.map(p => ({ id: p.id, pointId: p.pointId, legende: p.legende, w: p.w, h: p.h, data: new Uint8Array(p.buf) }));
-        const doc = Report.buildReport(window.docx, { affaire: a, visite: v, photos: ph, settings });
-        const blob = await window.docx.Packer.toBlob(doc);
+        let blob;
+        if (modele) {
+          blob = await Template.buildFromTemplate(window.JSZip, modele.buf, {
+            affaire: a, visite: v, photos: ph, codes: STATUTS,
+            settings: { clientLogo: a.logo ? { data: new Uint8Array(a.logo.buf), w: a.logo.w, h: a.logo.h } : null },
+          });
+        } else {
+          blob = await window.docx.Packer.toBlob(Report.buildReport(window.docx, { affaire: a, visite: v, photos: ph, settings }));
+        }
         const name = Report.fileName(a, v);
         const file = new File([blob], name, { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -631,13 +673,20 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
   async function viewSettings() {
     setBar('Réglages', '#/'); fab(null); revokeAll();
     const s = {};
-    for (const k of ['societe', 'agence', 'redacteur', 'fonction']) s[k] = await DB.getSetting(k, { societe: 'GINGER CEBTP', fonction: 'Ingénieur géotechnicien' }[k] || '');
+    const modele = await DB.getSetting('modele', null);
+    for (const k of ['societe', 'agence', 'redacteur', 'relecteur', 'fonction']) s[k] = await DB.getSetting(k, { societe: 'GINGER CEBTP', fonction: 'Ingénieur géotechnicien' }[k] || '');
     const logo = await DB.getSetting('logo', null);
     const iaKey = await DB.getSetting('iaKey', ''), iaModel = await DB.getSetting('iaModel', 'claude-sonnet-5-5'), dico = await DB.getSetting('dictionnaire', '');
     let usage = '';
     try { const e = await navigator.storage.estimate(); usage = `${(e.usage / 1048576).toFixed(1)} Mo utilisés`; } catch {}
     app.innerHTML = `
-      <h2>Cartouche du compte rendu</h2>
+      <h2>Modèle Word</h2>
+      <div class="card">
+        <p class="hint">Importez un de vos CR habituels (.docx). ANUBIS en garde le cartouche (logos), le pied de page, les styles et les marges, et y écrit vos observations et photos à chaque génération.</p>
+        ${modele ? `<p>✓ <b>${esc(modele.name)}</b></p>` : '<p class="hint">Aucun modèle importé : mise en page standard ANUBIS.</p>'}
+        <div class="row"><button class="btn small gold" id="tplBtn">${modele ? 'Remplacer le modèle' : 'Importer mon modèle .docx'}</button>${modele ? '<button class="btn small danger" id="tplDel">Retirer</button>' : ''}</div>
+      </div>
+      <h2>Mise en page standard (sans modèle)</h2>
       <div class="card">
         <label>Société</label><input id="societe" value="${esc(s.societe)}">
         <label>Agence (sous le logo)</label><input id="agence" value="${esc(s.agence)}" placeholder="ex. Agence de Bayonne">
@@ -648,6 +697,7 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
       <h2>Rédacteur par défaut</h2>
       <div class="card">
         <label>Nom</label><input id="redacteur" value="${esc(s.redacteur)}" placeholder="Prénom NOM">
+        <label>Relecteur par défaut</label><input id="relecteur" value="${esc(s.relecteur)}" placeholder="Prénom NOM">
         <label>Fonction</label><input id="fonction" value="${esc(s.fonction)}">
       </div>
       <h2>Assistant IA (Claude)</h2>
@@ -671,8 +721,8 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
         <button class="btn" id="exp">⬇︎ Exporter une sauvegarde</button>
         <button class="btn ghost" id="imp">⬆︎ Restaurer une sauvegarde</button>
       </div>
-      <p class="hint" style="text-align:center">ANUBIS v1.2 · fonctionne hors connexion</p>`;
-    for (const k of ['societe', 'agence', 'redacteur', 'fonction', 'iaKey']) $('#' + k).oninput = debounce((e) => DB.setSetting(k, e.target.value.trim()), 300);
+      <p class="hint" style="text-align:center">ANUBIS v1.3 · fonctionne hors connexion</p>`;
+    for (const k of ['societe', 'agence', 'redacteur', 'relecteur', 'fonction', 'iaKey']) $('#' + k).oninput = debounce((e) => DB.setSetting(k, e.target.value.trim()), 300);
     $('#iaModel').onchange = (e) => DB.setSetting('iaModel', e.target.value);
     $('#dictionnaire').oninput = debounce(async (e) => { await DB.setSetting('dictionnaire', e.target.value); loadVocab(); }, 300);
     $('#iaTest').onclick = async () => {
@@ -689,6 +739,16 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
       await DB.setSetting('logo', { buf: await b.arrayBuffer(), w: c.width, h: c.height }); viewSettings();
     };
     if (logo) $('#logoDel').onclick = async () => { await DB.setSetting('logo', null); viewSettings(); };
+    $('#tplBtn').onclick = async () => {
+      const [f] = await pickFiles({ accept: '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document', multiple: false }); if (!f) return;
+      try {
+        const buf = await f.arrayBuffer();
+        const info = await Template.inspectTemplate(window.JSZip, buf);
+        if (!info.hasHeader) alert('Attention : ce document n\'a pas d\'en-tête, le cartouche sera absent.');
+        await DB.setSetting('modele', { buf, name: f.name }); toast('Modèle importé'); viewSettings();
+      } catch (e) { alert('Import impossible : ' + e.message); }
+    };
+    if (modele) $('#tplDel').onclick = async () => { if (confirm('Retirer le modèle Word ?')) { await DB.setSetting('modele', null); viewSettings(); } };
     $('#exp').onclick = exportBackup;
     $('#imp').onclick = importBackup;
   }

@@ -1,7 +1,7 @@
 /* ANUBIS — service worker : l'app fonctionne hors connexion sur chantier.
    Changer VERSION à chaque mise à jour publiée sur GitHub. */
-const VERSION = 'anubis-v1.2.0';
-const FILES = ['./', 'index.html', 'style.css', 'app.js', 'db.js', 'report.js', 'docx.iife.js',
+const VERSION = 'anubis-v1.3.0';
+const FILES = ['./', 'index.html', 'style.css', 'app.js', 'db.js', 'report.js', 'template.js', 'jszip.min.js', 'docx.iife.js',
   'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
