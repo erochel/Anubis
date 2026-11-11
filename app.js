@@ -359,6 +359,8 @@ Règles :
       const oldD = frDate(v.date), newD = frDate($('#date').value);
       if (oldD && newD && oldD !== newD && $('#objet').value.includes(oldD)) $('#objet').value = $('#objet').value.split(oldD).join(newD);
       fields.forEach(k => v[k] = $('#' + k).value); v.numero = +v.numero || v.numero; await save();
+      if (v.redacteur.trim()) DB.setSetting('redacteur', v.redacteur.trim());
+      if ((v.relecteur || '').trim()) DB.setSetting('relecteur', v.relecteur.trim());
       $('#subtitle').textContent = `${a.numero} · Visite n°${v.numero} · ${frDate(v.date)}`;
     });
     fields.forEach(k => $('#' + k).addEventListener('input', persist));
@@ -696,8 +698,8 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
       </div>
       <h2>Rédacteur par défaut</h2>
       <div class="card">
-        <label>Nom</label><input id="redacteur" type="text" name="anubis-redacteur" value="${esc(s.redacteur)}" placeholder="Prénom NOM" autocomplete="off" autocorrect="off" data-lpignore="true">
-        <label>Relecteur par défaut</label><input id="relecteur" type="text" name="anubis-relecteur" value="${esc(s.relecteur)}" placeholder="Prénom NOM" autocomplete="off" autocorrect="off" data-lpignore="true">
+        <label>Nom</label><input id="redacteur" type="text" name="anubis-redacteur" value="${esc(s.redacteur)}" placeholder="Prénom NOM" autocomplete="off" autocorrect="off" data-lpignore="true"><button class="btn small ghost" type="button" data-ask="redacteur" style="margin-top:6px">✎ Saisir le rédacteur</button>
+        <label>Relecteur par défaut</label><input id="relecteur" type="text" name="anubis-relecteur" value="${esc(s.relecteur)}" placeholder="Prénom NOM" autocomplete="off" autocorrect="off" data-lpignore="true"><button class="btn small ghost" type="button" data-ask="relecteur" style="margin-top:6px">✎ Saisir le relecteur</button>
         <label>Fonction</label><input id="fonction" value="${esc(s.fonction)}">
       </div>
       <h2>Assistant IA (Claude)</h2>
@@ -742,6 +744,12 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
       await DB.setSetting('logo', { buf: await b.arrayBuffer(), w: c.width, h: c.height }); viewSettings();
     };
     if (logo) $('#logoDel').onclick = async () => { await DB.setSetting('logo', null); viewSettings(); };
+    $$('[data-ask]').forEach(b => b.onclick = async () => {
+      const k = b.dataset.ask, el = $('#' + k);
+      const val = prompt(k === 'redacteur' ? 'Rédacteur par défaut (Prénom NOM)' : 'Relecteur par défaut (Prénom NOM)', el.value);
+      if (val === null) return;
+      el.value = val.trim(); await DB.setSetting(k, val.trim()); toast('Enregistré');
+    });
     $('#tplBtn').onclick = async () => {
       const [f] = await pickFiles({ accept: '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document', multiple: false }); if (!f) return;
       try {
