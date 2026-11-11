@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="ANUBIS">
+  <meta name="theme-color" content="#111111">
+  <title>ANUBIS – Visites G4</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="topbar">
+    <button id="back" class="icon-btn" aria-label="Retour" hidden>‹</button>
+    <div id="title"><span class="brand">ANUBIS</span><small id="subtitle">Visites G4</small></div>
+    <button id="settingsBtn" class="icon-btn" aria-label="Réglages">⚙︎</button>
+  </header>
+  <nav id="tabs" hidden></nav>
+  <main id="app"></main>
+  <div id="toast" role="status"></div>
+
+  <script src="docx.iife.js"></script>
+  <script src="db.js"></script>
+  <script src="report.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
