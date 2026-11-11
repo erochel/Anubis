@@ -702,7 +702,7 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
       </div>
       <h2>Assistant IA (Claude)</h2>
       <div class="card">
-        <p class="hint">Corrige la dictée (« t'as lu » → talus…), reformule observations et avis en style CR G4, propose le statut et rédige la conclusion. Nécessite une clé API créée sur console.anthropic.com (facturée à l'usage, quelques centimes par visite). La clé reste sur cet iPhone ; le texte des points est envoyé à Claude au moment où vous touchez ✨.</p>
+        <p class="hint">Corrige la dictée (« t'as lu » → talus…), reformule observations et avis en style CR G4, propose le statut et rédige la conclusion. Nécessite votre propre clé API, créée sur platform.claude.com/settings/keys (crédits prépayés, quelques centimes par visite). La clé reste sur cet iPhone ; le texte des points est envoyé à Claude au moment où vous touchez ✨.</p>
         <label>Clé API</label><input id="iaKey" type="password" value="${esc(iaKey)}" placeholder="sk-ant-…" autocomplete="off">
         <label>Modèle</label><select id="iaModel">
           <option value="claude-sonnet-5-5" ${iaModel === 'claude-sonnet-5-5' ? 'selected' : ''}>Claude Sonnet 5.5 (recommandé)</option>
