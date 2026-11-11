@@ -103,3 +103,9 @@ dialog h3 { margin: 0 0 8px; }
 .check-item input { width: 22px; height: 22px; flex: 0 0 22px; }
 
 .seg button small { font-weight: 500; font-size: 11px; }
+
+/* Saisie au clavier sur iPhone : barres non collantes pour éviter les sauts d'écran */
+body.typing #topbar, body.typing #tabs { position: relative; top: auto; }
+body.typing .fab, body.typing #toast { display: none; }
+input, textarea, select { scroll-margin-top: 90px; scroll-margin-bottom: 120px; }
+html { overscroll-behavior-y: none; }
