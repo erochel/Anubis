@@ -723,7 +723,7 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
         <button class="btn" id="exp">⬇︎ Exporter une sauvegarde</button>
         <button class="btn ghost" id="imp">⬆︎ Restaurer une sauvegarde</button>
       </div>
-      <p class="hint" style="text-align:center">ANUBIS v1.3 · fonctionne hors connexion</p>`;
+      <p class="hint" style="text-align:center">ANUBIS v1.3.7 · fonctionne hors connexion</p>`;
     for (const k of ['societe', 'agence', 'redacteur', 'relecteur', 'fonction', 'iaKey']) {
       const el = $('#' + k), saveNow = () => DB.setSetting(k, el.value.trim());
       el.addEventListener('input', debounce(saveNow, 300)); el.addEventListener('change', saveNow); el.addEventListener('blur', saveNow);
@@ -813,5 +813,17 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
   loadVocab().then(route);
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Mises à jour : on contourne le cache HTTP de GitHub Pages et on recharge dès qu'une nouvelle version est active
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+      reg.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+    }).catch(() => {});
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloaded) return; reloaded = true;
+      if (!document.activeElement || !/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) location.reload();
+    });
+  }
 })();
