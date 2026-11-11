@@ -106,6 +106,64 @@
   // Dictée (reconnaissance vocale) — selon support du navigateur
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   let activeRec = null;
+  // ------------------------------------------------------------------
+  // Correction du vocabulaire dicté (hors ligne) + assistant IA (Claude)
+  // ------------------------------------------------------------------
+  const VOCAB = [
+    [/\b(t'?as|ta|tas) ?lu(s)?\b/gi, 'talus'], [/\bpied de t'?as lu\b/gi, 'pied de talus'],
+    [/\bplate ?forme\b/gi, 'plate-forme'], [/\bg[ée]o ?textile\b/gi, 'géotextile'],
+    [/\bdelta ?m ?s\b/gi, 'Delta MS'], [/\bfond de fouilles?\b/gi, 'fond de fouille'],
+    [/\bb[ée]ton projet[ée]\b/gi, 'béton projeté'], [/\bpi[ée]zo m[èe]tre\b/gi, 'piézomètre'],
+    [/\bp[ée]n[ée]tro m[èe]tre\b/gi, 'pénétromètre'], [/\bh ?e ?b\b/gi, 'HEB'], [/\bh ?e ?a\b/gi, 'HEA'],
+    [/\bg ?t ?r\b/gi, 'GTR'], [/\be ?v ?2\b/gi, 'EV2'], [/\bg ?2 ?pro\b/gi, 'G2 PRO'], [/\bg ?4\b/gi, 'G4'],
+  ];
+  let userVocab = [];
+  async function loadVocab() {
+    const txt = await DB.getSetting('dictionnaire', '');
+    userVocab = txt.split('\n').map(l => l.split(/=>|=|→/)).filter(a => a.length === 2 && a[0].trim())
+      .map(([a, b]) => [new RegExp('\\b' + a.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'gi'), b.trim()]);
+  }
+  const fixVocab = (t) => [...userVocab, ...VOCAB].reduce((acc, [re, rep]) => acc.replace(re, rep), t);
+
+  const AI_SYSTEM = `Tu es l'assistant d'un ingénieur géotechnicien de Ginger CEBTP qui réalise des missions G4 (supervision géotechnique d'exécution, NF P 94-500) et rédige des comptes rendus de visite de chantier.
+Les textes fournis viennent souvent d'une DICTÉE VOCALE sur chantier, avec des erreurs de reconnaissance phonétique (ex. « t'as lu raide » = « talus raide », « le prolétaire » peut être « le profilé », « les HB » = « les HEB »). Reconstitue le sens technique le plus probable en vocabulaire géotechnique et BTP (paroi berlinoise, profilés, blindage, liernes, butons, terrassement, fond de fouille, talus, plate-forme, Delta MS, drainage, venues d'eau, réseaux, remblai, compactage, etc.).
+Règles :
+- Style de compte rendu G4 : phrases courtes, factuelles, au présent, ton professionnel, sans « je ».
+- N'invente AUCUN fait, cote, mesure ou nom absent du texte. Si un passage reste incompréhensible, conserve-le entre crochets suivi de [?].
+- L'avis Ginger formule une position ou une prescription claire (ce qui est conforme, ce qui doit être surveillé, repris, transmis, avant quelle étape).
+- Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour.`;
+
+  async function aiCall(userText, maxTokens = 1200) {
+    const key = await DB.getSetting('iaKey', '');
+    if (!key) throw new Error('Ajoutez votre clé API Claude dans ⚙︎ Réglages → Assistant IA.');
+    const model = await DB.getSetting('iaModel', 'claude-sonnet-5-5');
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model, max_tokens: maxTokens, system: AI_SYSTEM, messages: [{ role: 'user', content: userText }] }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data?.error?.message || `Erreur ${r.status}`);
+    const txt = (data.content || []).map(c => c.text || '').join('');
+    const m = txt.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('Réponse IA illisible');
+    return JSON.parse(m[0]);
+  }
+
+  function aiDialog(title, fields, onApply) {
+    const d = document.createElement('dialog');
+    d.innerHTML = `<div class="dlg-body"><h3>✨ ${esc(title)}</h3>
+      ${fields.map((f, i) => `<label>${esc(f.label)}</label>${f.type === 'statut'
+        ? `<select data-i="${i}">${Object.entries(STATUTS).map(([k, st]) => `<option value="${k}" ${k === f.value ? 'selected' : ''}>${st.label}</option>`).join('')}</select>`
+        : `<textarea data-i="${i}" style="min-height:${f.label === 'Ouvrage' ? 52 : 110}px">${esc(f.value)}</textarea>`}`).join('')}
+      <p class="hint">Relisez et modifiez si besoin avant d'appliquer.</p>
+      <div class="row"><button class="btn ghost" id="cx">Annuler</button><button class="btn gold" id="okx">Appliquer</button></div></div>`;
+    document.body.appendChild(d);
+    $('#cx', d).onclick = () => { d.close(); d.remove(); };
+    $('#okx', d).onclick = () => { const vals = $$('[data-i]', d).map(e => e.value); d.close(); d.remove(); onApply(vals); };
+    d.showModal();
+  }
+
   function dictate(textarea, btn) {
     if (!SR) { toast('Dictée : utilisez le micro 🎤 du clavier iOS'); textarea.focus(); return; }
     if (activeRec) { activeRec.stop(); return; }
@@ -113,7 +171,7 @@
     const base = textarea.value;
     let acc = '';
     rec.onresult = (e) => {
-      for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) acc += e.results[i][0].transcript.trim() + ' ';
+      for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) acc += fixVocab(e.results[i][0].transcript.trim()) + ' ';
       textarea.value = (base ? base.replace(/\s*$/, '\n') : '') + acc.trim();
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     };
@@ -267,6 +325,7 @@
       </div>
       <div class="card">
         <label>Conclusion et suites à donner</label>${micField('conclusion', v.conclusion)}
+        <button class="btn ghost small" id="aiConcl" style="margin-top:8px">✨ Rédiger la conclusion à partir des contrôles</button>
         <label>Prochaine visite prévue</label><input id="prochaineVisite" value="${esc(v.prochaineVisite)}" placeholder="ex. semaine 47 / à l'avancement">
         <label>Diffusion</label><input id="diffusion" value="${esc(v.diffusion)}" placeholder="MOA, MOE, Entreprise…">
       </div>
@@ -281,6 +340,16 @@
       const m = $('#meteo'); m.value = m.value ? `${m.value}, ${c.dataset.meteo.toLowerCase()}` : c.dataset.meteo; persist();
     });
     bindMics();
+    $('#aiConcl').onclick = async (ev) => {
+      if (!v.points.length) return toast('Ajoutez d\'abord des points de contrôle');
+      const b = ev.currentTarget; b.disabled = true; b.textContent = '✨ Rédaction…';
+      try {
+        const pts = v.points.map((p, i) => `${i + 1}. ${p.ouvrage} [${STATUTS[p.statut]?.label}] Obs : ${p.observation} | Avis : ${p.avis}`).join('\n');
+        const r = await aiCall(`Opération : ${a.intitule} (${a.commune}). Phase : ${v.phase || 'non précisée'}.\nPoints de contrôle de la visite :\n${pts}\nNotes de conclusion déjà saisies (dictée) : ${$('#conclusion').value || '(aucune)'}\n\nRédige la conclusion du compte rendu : synthèse en 2 à 5 phrases puis les suites à donner sous forme de tirets « - ». JSON attendu : {"conclusion": "..."}`);
+        aiDialog('Conclusion proposée', [{ label: 'Conclusion et suites à donner', value: r.conclusion || '' }], ([c]) => { $('#conclusion').value = c; persist(); });
+      } catch (e) { alert(e.message); }
+      b.disabled = false; b.textContent = '✨ Rédiger la conclusion à partir des contrôles';
+    };
     $('#delV').onclick = async () => {
       if (!confirm(`Supprimer la visite n°${v.numero} (photos et notes comprises) ?`)) return;
       await deleteVisite(v.id); location.hash = `#/affaire/${a.id}`;
@@ -311,6 +380,7 @@
             ${ph.length ? `<div class="thumbs mini">${ph.map(x => `<div class="thumb"><img src="${blobUrl(x)}"><span class="tag">${photos.indexOf(x) + 1}</span></div>`).join('')}</div>` : ''}
             <div class="point-tools">
               <button class="btn small gold" data-act="photo">📷 Photo</button>
+              <button class="btn small" data-act="ai">✨ IA</button>
               <button class="btn small ghost" data-act="up">↑</button>
               <button class="btn small ghost" data-act="down">↓</button>
               <button class="btn small danger" data-act="del">Supprimer</button>
@@ -343,6 +413,25 @@
             for (const x of photos.filter(x => x.pointId === p.id)) { x.pointId = null; await DB.put('media', x); }
           } else if (b.dataset.act === 'up' && i > 0) [v.points[i - 1], v.points[i]] = [v.points[i], v.points[i - 1]];
           else if (b.dataset.act === 'down' && i < v.points.length - 1) [v.points[i + 1], v.points[i]] = [v.points[i], v.points[i + 1]];
+          else if (b.dataset.act === 'ai') {
+            if (!p.observation.trim() && !p.avis.trim()) return toast('Dictez ou saisissez d\'abord une observation');
+            b.disabled = true; b.textContent = '…';
+            try {
+              const r = await aiCall(`Opération : ${a.intitule} (${a.commune}). Phase : ${v.phase || 'non précisée'}.
+Ouvrage : ${p.ouvrage || '(non précisé)'}
+Statut choisi : ${STATUTS[p.statut]?.label}
+Observations brutes (dictée) : ${p.observation || '(vide)'}
+Avis brut : ${p.avis || '(vide)'}
+
+Corrige et reformule en style CR G4. Si l'avis est vide, propose un avis Ginger cohérent avec les observations. Propose le statut le plus adapté parmi : conforme, surveiller, nonconf, nv. Améliore aussi l'intitulé de l'ouvrage s'il est vague (ex. « Zone 1 » → « Zone 1 – talus »), sans inventer.
+JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut": "conforme|surveiller|nonconf|nv"}`);
+              aiDialog(`Point ${i + 1}`, [
+                { label: 'Ouvrage', value: r.ouvrage || p.ouvrage }, { label: 'Observations', value: r.observation || '' },
+                { label: 'Avis Ginger', value: r.avis || '' }, { label: 'Statut', type: 'statut', value: STATUTS[r.statut] ? r.statut : p.statut },
+              ], async ([o, ob, av, st]) => { Object.assign(p, { ouvrage: o, observation: ob, avis: av, statut: st }); await save(); render(); toast('Point mis à jour'); });
+            } catch (e) { alert(e.message); }
+            return render();
+          }
           else if (b.dataset.act === 'photo') {
             const added = await addPhotos(v, p.id); photos.push(...added); toast(`${added.length} photo(s) liée(s) au point ${i + 1}`);
           }
@@ -544,6 +633,7 @@
     const s = {};
     for (const k of ['societe', 'agence', 'redacteur', 'fonction']) s[k] = await DB.getSetting(k, { societe: 'GINGER CEBTP', fonction: 'Ingénieur géotechnicien' }[k] || '');
     const logo = await DB.getSetting('logo', null);
+    const iaKey = await DB.getSetting('iaKey', ''), iaModel = await DB.getSetting('iaModel', 'claude-sonnet-5-5'), dico = await DB.getSetting('dictionnaire', '');
     let usage = '';
     try { const e = await navigator.storage.estimate(); usage = `${(e.usage / 1048576).toFixed(1)} Mo utilisés`; } catch {}
     app.innerHTML = `
@@ -560,14 +650,36 @@
         <label>Nom</label><input id="redacteur" value="${esc(s.redacteur)}" placeholder="Prénom NOM">
         <label>Fonction</label><input id="fonction" value="${esc(s.fonction)}">
       </div>
+      <h2>Assistant IA (Claude)</h2>
+      <div class="card">
+        <p class="hint">Corrige la dictée (« t'as lu » → talus…), reformule observations et avis en style CR G4, propose le statut et rédige la conclusion. Nécessite une clé API créée sur console.anthropic.com (facturée à l'usage, quelques centimes par visite). La clé reste sur cet iPhone ; le texte des points est envoyé à Claude au moment où vous touchez ✨.</p>
+        <label>Clé API</label><input id="iaKey" type="password" value="${esc(iaKey)}" placeholder="sk-ant-…" autocomplete="off">
+        <label>Modèle</label><select id="iaModel">
+          <option value="claude-sonnet-5-5" ${iaModel === 'claude-sonnet-5-5' ? 'selected' : ''}>Claude Sonnet 5.5 (recommandé)</option>
+          <option value="claude-haiku-5-5" ${iaModel === 'claude-haiku-5-5' ? 'selected' : ''}>Claude Haiku 5.5 (plus économique)</option>
+          <option value="claude-opus-5-5" ${iaModel === 'claude-opus-5-5' ? 'selected' : ''}>Claude Opus 5.5 (plus fin)</option></select>
+        <button class="btn small ghost" id="iaTest" style="margin-top:10px">Tester la connexion</button>
+      </div>
+      <h2>Dictionnaire de dictée</h2>
+      <div class="card">
+        <p class="hint">Mots mal compris par la dictée, corrigés automatiquement (hors ligne). Une règle par ligne : <b>entendu => correct</b>. « t'as lu => talus » est déjà intégré.</p>
+        <textarea id="dictionnaire" placeholder="prolétaire => profilé&#10;les HB => les HEB">${esc(dico)}</textarea>
+      </div>
       <h2>Sauvegarde</h2>
       <div class="card">
         <p class="hint">Les données restent sur cet iPhone (${usage}). Exportez régulièrement une sauvegarde dans Fichiers / OneDrive.</p>
         <button class="btn" id="exp">⬇︎ Exporter une sauvegarde</button>
         <button class="btn ghost" id="imp">⬆︎ Restaurer une sauvegarde</button>
       </div>
-      <p class="hint" style="text-align:center">ANUBIS v1.0 · fonctionne hors connexion</p>`;
-    for (const k of ['societe', 'agence', 'redacteur', 'fonction']) $('#' + k).oninput = debounce((e) => DB.setSetting(k, e.target.value.trim()), 300);
+      <p class="hint" style="text-align:center">ANUBIS v1.2 · fonctionne hors connexion</p>`;
+    for (const k of ['societe', 'agence', 'redacteur', 'fonction', 'iaKey']) $('#' + k).oninput = debounce((e) => DB.setSetting(k, e.target.value.trim()), 300);
+    $('#iaModel').onchange = (e) => DB.setSetting('iaModel', e.target.value);
+    $('#dictionnaire').oninput = debounce(async (e) => { await DB.setSetting('dictionnaire', e.target.value); loadVocab(); }, 300);
+    $('#iaTest').onclick = async () => {
+      await DB.setSetting('iaKey', $('#iaKey').value.trim());
+      try { const r = await aiCall('Corrige : « le t\'as lu est un peu raide ». JSON : {"observation": "..."}', 200); alert('Connexion OK ✓\n\nTest : ' + r.observation); }
+      catch (e) { alert('Échec : ' + e.message); }
+    };
     $('#logoBtn').onclick = async () => {
       const [f] = await pickFiles({ multiple: false }); if (!f) return;
       const bmp = await createImageBitmap(f); const c = document.createElement('canvas');
@@ -627,7 +739,7 @@
   }
   $('#settingsBtn').onclick = () => (location.hash = '#/reglages');
   window.addEventListener('hashchange', route);
-  route();
+  loadVocab().then(route);
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
