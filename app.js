@@ -808,11 +808,6 @@ JSON attendu : {"ouvrage": "...", "observation": "...", "avis": "...", "statut":
     if (h[0] === 'reglages') return viewSettings();
     return viewHome();
   }
-  // Clavier iOS : on désactive les barres collantes pendant la saisie
-  const isField = (el) => el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && el.type !== 'file';
-  let typingT;
-  document.addEventListener('focusin', (e) => { if (isField(e.target)) { clearTimeout(typingT); document.body.classList.add('typing'); } });
-  document.addEventListener('focusout', () => { typingT = setTimeout(() => { if (!isField(document.activeElement)) document.body.classList.remove('typing'); }, 150); });
   $('#settingsBtn').onclick = () => (location.hash = '#/reglages');
   window.addEventListener('hashchange', route);
   loadVocab().then(route);
