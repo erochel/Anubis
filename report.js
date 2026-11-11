@@ -144,17 +144,17 @@
     }
     points.forEach((pt, i) => {
       const refs = photos.filter(p => p.pointId === pt.id).map(p => photoNum.get(p.id));
-      const obsChildren = [P(pt.observation || '')];
+      const obsChildren = [P(pt.observation || '', { size: 20 })];
       if (refs.length) obsChildren.push(P(`(cf. photo${refs.length > 1 ? 's' : ''} n°${refs.join(', ')})`, { italics: true, color: '595959', size: 16 }));
       const st = STATUTS[pt.statut] || null;
       const avisChildren = [];
       if (st) avisChildren.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: st.label.toUpperCase(), bold: true, font: FONT, size: 18, color: st.color })] }));
-      avisChildren.push(P(pt.avis || ''));
+      avisChildren.push(P(pt.avis || '', { size: 20 }));
       obsRows.push(new TableRow({
         cantSplit: false,
         children: [
           cell(new Paragraph({ alignment: AlignmentType.CENTER, children: runs(String(i + 1), { bold: true }) }), wc[0]),
-          cell(P(pt.ouvrage || '', { bold: true }), wc[1]),
+          cell(P(pt.ouvrage || '', { bold: true, size: 20 }), wc[1]),
           cell(obsChildren, wc[2]),
           cell(avisChildren, wc[3]),
         ],

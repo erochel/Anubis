@@ -9,14 +9,14 @@
   const frDate = (iso) => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}`; };
   const EMU_CM = 360000;
 
-  const RPR = '<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
-  const RPR_B = '<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
+  const RPR = '<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
+  const RPR_B = '<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
   const RPR_HEAD = '<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
 
   // runs multi-lignes
   const runs = (text, rpr = RPR) => String(text ?? '').split('\n')
     .map((l, i) => `${i ? `<w:r>${rpr}<w:br/></w:r>` : ''}<w:r>${rpr}<w:t xml:space="preserve">${xe(l)}</w:t></w:r>`).join('');
-  const para = (inner, ppr = '<w:jc w:val="both"/>') => `<w:p><w:pPr>${ppr}</w:pPr>${inner}</w:p>`;
+  const para = (inner, ppr = '<w:jc w:val="both"/>') => `<w:p><w:pPr>${ppr}${RPR}</w:pPr>${inner}</w:p>`;
   const emptyP = (sz = 10) => `<w:p><w:pPr><w:rPr><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/></w:rPr></w:pPr></w:p>`;
 
   function tc(width, content, { fill, vMerge, borders, vAlign } = {}) {
